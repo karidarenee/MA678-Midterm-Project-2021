@@ -1,0 +1,231 @@
+---
+title: 'HR Analytics: Who Will Move to a New Job'
+author: "Yongrong Chai"
+date: "12/10/2021"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE, echo=FALSE, message = FALSE, comment = NA, warning = FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+library(dplyr)
+library(furniture)
+library(kableExtra)
+library(GGally)
+library(reshape2)
+library(scales)
+library(lme4)
+library(lmerTest)
+library(tidyr)
+library(jtools)
+library(lattice)
+library(arm)
+library(effects)
+library(sjPlot)
+library(VGAM)
+library(ggpubr)
+HR <- read.csv("aug_train.csv", header = T)
+```
+
+## Abstract
+In this report, I did a HR analytic on job change of data scientists using data from the Kaggle(https://www.kaggle.com) to explore what and how affected factors make an employee leave his/her current job. I found that training hours, working experience, and city development index have negative influence on candidates’ willingness of finding a new job. Education level, company type, and enrolled university have different effects on willingness of finding a new job. The report will be helpful on lower the company’s employee turnover. There are 5 main parts in this report: Introduction, Method, Result and Discussion. 
+
+## Introduction
+Companies that specializes in Big Data and Data Science are looking to hire data scientists, and they also provide some courses for their candidates. Although candidates have signed up for the training, some of them still want to leave for another new job. The company needs to know which of these candidates genuinely wants to work for the company after training or looking for a new job because it helps to cut costs and time while also improving the quality of training or course preparation and categorization. Candidates' demographics, education, and experience are all in the hands of those who sign up and enroll. To address there questions, I used the factors related with my outcome variable, “target” with 0(Not looking for a job change) and 1(Looking for a job change), and built logistic multilevel models based on different groups with mixed effect of education level, company type, and enrolled university, and fixed effect of numerical predictors training hours, working experience, and city development index. From a corporate perspective, gender discrimination is something to avoid when hiring and making decisions, so I don't include `gender` as one of my predictors.
+
+## Method
+
+### Data Processing
+
+Variable Description:
+
+| Variables              | Description                                               |
+|:-----------------------|:----------------------------------------------------------|
+| enrollee_id            | Unique ID for candidate                                   |
+| city                   | City code                                                 |
+| city_development_index | Development index of the city (scaled)                    |
+| gender                 | Gender of candidate                                       |
+| relevent_experience    | Relevant experience of candidate                          |
+| enrolled_university    | Type of University course enrolled if any                 |
+| education_level        | Education level of candidate                              |
+| major_discipline       | Education major discipline of candidate                   |
+| experience             | Candidate total experience in years                       |
+| company_size           | No of employees in current employer's company             |
+| company_type           | Type of current employer                                  |
+| last_new_job           | Difference in years between previous job and current job  |
+| training_hours         | Training hours completed                                  |
+| target                 | 0–Not looking for job change, 1–Looking for a job change  |
+
+
+There are 19,158 individuals, and 14 variables with many missing values. Although the multilevel model I would use was not influenced by missing data, it is important to figure out why they are missing. In this case, candidates didn't provide their answers when they registered and enrolled, so the missing data was missing at random, deleting the instances with missing data does not lead to biased inference. The HR analysis focuses on what factors may affect on willingness of finding a new job. From a company's perspective, gender discrimination is something to avoid when hiring and making decisions, so I don't include `gender` as one of my predictors. I chose `training_hours`, `city_development_index`, and `experience` as numerical predictors, and `education_level`, `enrolled_university`, and `company_size`, `relevent_experience`,  `major_discipline`, `last_new_job`, and `company_type` are categorical variables for mixed effect.
+
+```{r , echo=FALSE}
+HR <- read.csv("aug_train.csv", header = T)
+HR$experience<-gsub(c(">","<"),"",as.character(HR$experience))
+HR$experience<-gsub("<1","1",as.character(HR$experience))
+HR$company_size<-gsub("/","-",as.character(HR$company_size))
+HR$experience <- as.numeric(HR$experience)
+#str(HR)
+
+HR$education_level[HR$education_level == ""] <- "No_answer"
+HR$company_size[HR$company_size == ""] <- "No_answer"
+HR$major_discipline[HR$major_discipline == ""] <- "No_answer"
+HR$enrolled_university[HR$enrolled_university == ""] <- "No_answer"
+HR$company_type[HR$company_type == ""] <- "No_answer"
+```
+
+### Explanatory Data Analysis
+
+```{r , echo=FALSE, fig.cap="Different ratio of people who are finding a new job with different company types, enrolled university and education level"}
+source(file = "Final_EDA.R")
+p3
+p5
+p6
+```
+
+Here are several findings fro above figures People with bachelor's and graduate degrees are more likely to change jobs than people at other education levels, with up to 25 percent of undergraduates considering changing jobs. People who do not currently enroll in college are more likely to stay than people take full time courses and part time courses. Nearly 25 percent of employees in companies with 10 to 49 want to change jobs.
+
+
+```{r, echo=FALSE}
+#source(file = "Final_EDA.R")
+line3
+ggplot(data = HR)+
+  aes(y = target, x = city_development_index)+
+  geom_point(aes(color = company_type),alpha = 0.3)+
+  labs(title="Relationship between city development index & job change\n by company type and education level",
+       x="City Development Index", y = "Target")+
+  geom_smooth(aes(color = company_type),method = "lm",se=F)+
+  theme(axis.text.x = element_text(angle = 50, hjust = 0.5, vjust = 0.5))+
+  facet_grid(~education_level)
+```
+
+
+
+
+### Model Fitting
+The models I used are the multilevel logistic model. The response variable, `target`, is binary. I make the `training_hours` in log scale because this variable is skewed with a heavy tail. For each model, there is fixed effect of numerical predictors training hours, working experience, and city development index, and one with a random effect of `company_type`, with a random effect of `education_level`, and one with a random effect of `enrolled_university`. Different education level, company type, major discipline and enrolled university and company size have very small effect on training hours and experience, so I exclude them from my models.
+
+```{r,echo=FALSE}
+model1 = glmer(formula = target ~ log(training_hours) + experience + city_development_index + (1 + city_development_index|education_level), family = binomial(link = "logit"), data = HR)
+#summary(model1)
+dotplot(ranef(model1, condVar = TRUE))
+```
+
+
+```{r, echo=FALSE}
+model2 = glmer(formula = target ~ log(training_hours) + experience + city_development_index + (1+city_development_index|company_type), family = binomial(link = "logit"), data = HR)
+#summary(model2)
+dotplot(ranef(model2, condVar = TRUE))
+```
+
+```{r, echo=FALSE}
+model3 = glmer(formula = target ~ log(training_hours) + experience + city_development_index + (1 + city_development_index|enrolled_university), family = binomial(link = "logit"), data = HR)
+#summary(model3)
+dotplot(ranef(model3, condVar = TRUE))
+#model4 = glmer(formula = target ~ log(training_hours) + experience + city_development_index + (1+city_development_index|company_size), family = binomial(link = "logit"), data = HR)
+
+#model4 = glmer(formula = target ~ log(training_hours) + experience + city_development_index + (1+log(training_hours) + experience +city_development_index|last_new_job), family = binomial(link = "logit"), data = HR)
+
+
+#model7<-glmer(formula = target ~ log(training_hours) + experience + city_development_index + (1+city_development_index|last_new_job) + (1+city_development_index|company_size) + (1+city_development_index|enrolled_university) + (1+city_development_index|major_discipline) + (1+city_development_index|company_type) + (1+city_development_index|education_level), family = binomial(link = "logit"), data = HR)
+
+#model7<-glmer(formula = target ~ log(training_hours) + experience + city_development_index + (1+city_development_index|company_size) + (1+city_development_index|enrolled_university), family = binomial(link = "logit"), data = HR)
+#summary(model3)
+```
+
+
+### Model Checking
+```{r, echo=FALSE}
+#qqmath(model1)
+#summary(model3)
+#qqmath(model7)
+```
+I used binned residual plot to check models, and most of fitted values seem to fall within the SE bands. (Please see Appendix Model Checking for details)
+
+## Result 
+
+People will be 0.5% to 0.75% less likely to change a job when 1 unit of log of training hour increased.
+People will be 0.5% to 1% less likely to change a job when 1 year of working experience higher.
+People will be 134% to 168% less likely to change a job when the city have 1 unit of city development index higher.
+
+$$Pr(y_{i}=1) = logit^{-1}(4.07 + (-0.03)log(TrainingHours) + (-0.04)Experience + (-6.24)CityDevelopmentIndex)+Effect_{EducationLevel})$$
+```{r , echo=FALSE}
+dotplot(ranef(model1, condVar = TRUE))
+```
+Education Level:
+For education level of primary school, there is a strong negative correlation between city development index and willingness of finding a new job. In the other words, if a person with an education level of primary school, he/she is more likely to stay on the current position if the city development index is high. If a person with an education level of high school, graduate school and phd, he/she is more likely to find a new job if the city development index is high. For people with master's degree, their willingness of changing a job is not affected by city development index.
+
+
+$$Pr(y_{i}=1) = logit^{-1}(4.42 + (-0.03)log(TrainingHours) + (-0.02)Experience + (-6.75)CityDevelopmentIndex)+Effect_{CompanyType})$$
+```{r, echo=FALSE}
+dotplot(ranef(model2, condVar = TRUE))
+```
+Company Type:
+For company type of early stage startup, funded startup, Pvt. Ltd. and NGO, there is a negative correlation between city development index and willingness of finding a new job. In the other words, if people are in one of these companies, they are more likely to stay on the current position if the city development index is high. For people who are in a public sector, they are more likely to stay on the current position if the city development index is low. This makes sense because people who work for nonprofits are motivated by their belief in their organization and its mission, so they don't make the city development index as a criterion for choosing a job.
+
+$$Pr(y_{i}=1) = logit^{-1}(3.57 + (-0.02)log(TrainingHours) + (-0.02)Experience + (-5.38)CityDevelopmentIndex)+Effect_{EnrolledUniversity})$$
+```{r, echo=FALSE}
+dotplot(ranef(model3, condVar = TRUE))
+```
+Enrolled University:
+For candidates who currently take part time courses and no-enrollment, there is a negative correlation between city development index and willingness of finding a new job. In the other words, they are more likely to stay on the current position if the city development index is high. However, students who are full time enrollment are more likely to change a job if the city development index is high. It might because full time enrollment students may work as interns, so the current interns are not their final career choices.
+
+
+## Discussion
+
+From the perspective of HR, the report is not very helpful for the recruitment of a company's HR department. A company's retention strategies should focus on company culture, career development, employee benefits. None of the predictors in this report should be used as a criteria for recruiting. It may be worth noting that candidates without higher education are less likely to consider changing jobs, and those with less working experience are more likely to do so.
+
+## Appendix
+
+### Missing Value
+```{r, echo=FALSE}
+HR[HR == ""] = NA
+colSums(is.na(HR))
+#colSums(is.na(HR)) / nrow(HR)
+```
+
+### More EDA
+```{r , echo=FALSE}
+p_2v2
+p_2v3
+p4
+```
+
+### Full Result
+Random effects of model1,2,3
+```{r, echo=FALSE}
+ranef(model1)
+ranef(model2)
+ranef(model3)
+```
+Fixed effects of model1,2,3
+```{r, echo=FALSE}
+fixef(model1)
+fixef(model2)
+fixef(model3)
+```
+Coefficients of model
+```{r, echo=FALSE}
+coef(model1)
+coef(model2)
+coef(model3)
+```
+Effect models
+```{r}
+plot_model(model1, type='eff')
+plot_model(model2, type='eff')
+plot_model(model3, type='eff')
+```
+
+Model Checking
+```{r}
+binnedplot(fitted(model1),resid(model1,type="response"),main="Binned residual plot for model1")
+binnedplot(fitted(model2),resid(model2,type="response"),main="Binned residual plot for model2")
+binnedplot(fitted(model3),resid(model3,type="response"),main="Binned residual plot for model3")
+
+```
